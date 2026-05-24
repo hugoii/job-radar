@@ -1,14 +1,14 @@
-# job-radar filter config
-# Email credentials come from GitHub Secrets (env vars), not this file.
+# job-radar filter config — Gmail credentials come from GitHub Secrets.
 
-# Max age of a job posting (days). Older postings are skipped.
+# Max age of a posting in days. Lower = fresher but fewer hits.
 max_days_old: 7
 
-# Role keyword filters (case-insensitive, word-boundary match).
-# Job's role title must match >= 1 keyword.
-# Categories: SWE / Full Stack / Backend  +  ML / AI / DS  +  Cloud / DevOps / SRE  +  Product / TPM
+# Only US locations. Filter knows all 50 states + DC + common bare city aliases (SF, NYC, LA).
+us_only: true
+
+# Role title must match >= 1 keyword (case-insensitive, word-boundary).
 keywords:
-  # --- SWE / Full Stack / Backend / Frontend ---
+  # SWE / Full Stack / Backend / Frontend / Mobile
   - software engineer
   - software developer
   - swe
@@ -24,7 +24,7 @@ keywords:
   - ios engineer
   - android engineer
 
-  # --- ML / AI / Data ---
+  # ML / AI / Data
   - machine learning
   - ml engineer
   - mle
@@ -37,7 +37,7 @@ keywords:
   - llm
   - genai
 
-  # --- Cloud / DevOps / SRE / Platform / Infra ---
+  # Cloud / DevOps / SRE / Platform / Infra
   - cloud engineer
   - devops
   - sre
@@ -46,7 +46,7 @@ keywords:
   - infrastructure engineer
   - systems engineer
 
-  # --- Product / TPM / FDE / SA ---
+  # Product / TPM / FDE / SA
   - product manager
   - apm
   - associate product
@@ -56,31 +56,108 @@ keywords:
   - forward deployed
   - solutions architect
 
-# Reject if role contains any of these (case-insensitive substring).
+# Reject if role title contains any of these (case-insensitive substring).
 exclude_keywords:
+  # Experience level — NG / 0-2yr is OK, anything above isn't
   - intern
   - internship
   - co-op
   - phd
-  - manager ii
-  - principal
-  - staff engineer
   - senior
-  - sr.
+  - " sr "
+  - " sr."
+  - "sr,"
+  - staff engineer
+  - principal
   - lead engineer
+  - lead software
+  - manager ii
+  - engineer 2
+  - engineer 3
+  - engineer 4
+  - engineer ii
+  - engineer iii
+  - engineer iv
+  - level 2
+  - level 3
+  - level ii
+  - level iii
+  - mid-level
+  - mid level
 
-# Reject if location contains any of these (case-insensitive substring).
-# Pre-filled with countries that won't sponsor H1B. Tune freely.
-location_exclude:
-  - india
-  - poland
-  - germany
-  - united kingdom
-  - ireland
-  - romania
-  - mexico
-  - brazil
-  - japan
-  - korea
-  - singapore
-  - australia
+  # Clearance / citizenship — strong signal of no H1B sponsorship
+  - clearance
+  - top secret
+  - ts/sci
+  - polygraph
+  - us citizen
+  - u.s. citizen
+  - u.s citizen
+  - citizenship required
+  - must be a us citizen
+  - dod
+  - department of defense
+
+# Block specific companies (case-insensitive substring on company name).
+# Defense / federal contractors — most positions require clearance & US citizenship, no H1B.
+# Comment out any you want to re-enable.
+company_block:
+  - RTX
+  - Raytheon
+  - Lockheed
+  - Northrop
+  - General Dynamics
+  - Booz Allen
+  - L3Harris
+  - BAE Systems
+  - Leidos
+  - SAIC
+  - MITRE
+  - Amentum
+  - CACI
+  - ManTech
+  - Peraton
+  - KBR
+  - Aerospace Corp
+  - Sandia
+  - Lincoln Lab
+  - Los Alamos
+  - JHU APL
+  - Applied Physics Lab
+  - Draper
+  - Battelle
+  - Captivation
+  - Altamira
+  - Two Six Technologies
+  - Riverside Research
+  - Parsons
+  - Carahsoft
+
+# Block locations associated with US military / intelligence (clearance-only sites).
+location_block:
+  - AFB
+  - Air Force Base
+  - Naval Base
+  - Naval Station
+  - Fort Bragg
+  - Fort Meade
+  - Fort Belvoir
+  - Fort Hood
+  - Fort Liberty
+  - Fort Detrick
+  - Fort Gordon
+  - Quantico
+  - Wright-Patterson
+  - Annapolis Junction
+  - Crane, IN
+  - Dahlgren
+  - Pax River
+  - China Lake
+  - Eglin
+  - Hanscom
+  - Patuxent
+  - White Sands
+  - Picatinny
+
+# Kept for backwards compat — superseded by us_only above.
+location_exclude: []
