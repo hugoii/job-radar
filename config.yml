@@ -1,0 +1,86 @@
+# job-radar filter config
+# Email credentials come from GitHub Secrets (env vars), not this file.
+
+# Max age of a job posting (days). Older postings are skipped.
+max_days_old: 7
+
+# Role keyword filters (case-insensitive, word-boundary match).
+# Job's role title must match >= 1 keyword.
+# Categories: SWE / Full Stack / Backend  +  ML / AI / DS  +  Cloud / DevOps / SRE  +  Product / TPM
+keywords:
+  # --- SWE / Full Stack / Backend / Frontend ---
+  - software engineer
+  - software developer
+  - swe
+  - full stack
+  - fullstack
+  - full-stack
+  - backend
+  - back-end
+  - frontend
+  - front-end
+  - web developer
+  - mobile engineer
+  - ios engineer
+  - android engineer
+
+  # --- ML / AI / Data ---
+  - machine learning
+  - ml engineer
+  - mle
+  - ai engineer
+  - applied scientist
+  - applied ai
+  - data scientist
+  - data engineer
+  - research engineer
+  - llm
+  - genai
+
+  # --- Cloud / DevOps / SRE / Platform / Infra ---
+  - cloud engineer
+  - devops
+  - sre
+  - site reliability
+  - platform engineer
+  - infrastructure engineer
+  - systems engineer
+
+  # --- Product / TPM / FDE / SA ---
+  - product manager
+  - apm
+  - associate product
+  - technical program manager
+  - tpm
+  - solutions engineer
+  - forward deployed
+  - solutions architect
+
+# Reject if role contains any of these (case-insensitive substring).
+exclude_keywords:
+  - intern
+  - internship
+  - co-op
+  - phd
+  - manager ii
+  - principal
+  - staff engineer
+  - senior
+  - sr.
+  - lead engineer
+
+# Reject if location contains any of these (case-insensitive substring).
+# Pre-filled with countries that won't sponsor H1B. Tune freely.
+location_exclude:
+  - india
+  - poland
+  - germany
+  - united kingdom
+  - ireland
+  - romania
+  - mexico
+  - brazil
+  - japan
+  - korea
+  - singapore
+  - australia
