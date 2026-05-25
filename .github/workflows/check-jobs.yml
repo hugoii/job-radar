@@ -12,6 +12,11 @@ on:
 permissions:
   contents: write              # so the workflow can commit seen_jobs.json back
 
+env:
+  # Use Node 24 runtime for JS actions — silences the deprecation warning for checkout@v4 / setup-python@v5.
+  # Without this, GitHub will switch to Node 24 by default on 2026-06-02 and remove Node 20 on 2026-09-16.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   check:
     runs-on: ubuntu-latest

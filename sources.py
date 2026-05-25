@@ -9,6 +9,7 @@ import requests
 
 
 SIMPLIFY_README_URL = "https://raw.githubusercontent.com/SimplifyJobs/New-Grad-Positions/master/README.md"
+VANSHB03_README_URL = "https://raw.githubusercontent.com/vanshb03/New-Grad-2026/main/README.md"
 
 
 def fetch_simplify_newgrad() -> list[dict]:
@@ -16,6 +17,13 @@ def fetch_simplify_newgrad() -> list[dict]:
     resp = requests.get(SIMPLIFY_README_URL, timeout=30)
     resp.raise_for_status()
     return list(_parse_simplify(resp.text))
+
+
+def fetch_vanshb03_newgrad() -> list[dict]:
+    """Parse vanshb03/New-Grad-2026 README (pure markdown tables)."""
+    resp = requests.get(VANSHB03_README_URL, timeout=30)
+    resp.raise_for_status()
+    return list(_parse_vanshb03(resp.text))
 
 
 _TR_PATTERN = re.compile(r"<tr>(.*?)</tr>", re.DOTALL | re.IGNORECASE)
@@ -69,6 +77,70 @@ def _parse_simplify(text: str) -> Iterable[dict]:
         }
 
 
+def _parse_vanshb03(md: str) -> Iterable[dict]:
+    """Parse vanshb03-style markdown tables: | Company | Role | Location | <a href=...> | Mon DD |"""
+    last_company = None
+    in_table = False
+    for line in md.splitlines():
+        if not line.startswith("|"):
+            in_table = False
+            continue
+        cells = [c.strip() for c in line.split("|")[1:-1]]
+        if len(cells) < 5:
+            continue
+        first = cells[0]
+        # Separator row → enter table mode
+        if set(first) <= {"-", ":", " "} and first:
+            in_table = True
+            continue
+        # Header row
+        if first.lower() in ("company", "name"):
+            continue
+        if not in_table:
+            continue
+
+        company_cell, role_cell, loc_cell, app_cell, date_cell = cells[:5]
+
+        if company_cell == "↳":
+            company = last_company
+        else:
+            m = re.search(r"\[([^\]]+)\]", company_cell)
+            if m:
+                company = m.group(1).strip()
+            else:
+                company = company_cell.strip("* ").strip()
+            if company:
+                last_company = company
+        if not company:
+            continue
+
+        role = _strip_html(role_cell)
+        if not role:
+            continue
+        location = _strip_html(loc_cell)
+
+        urls = re.findall(r'href="(https?://[^"]+)"', app_cell)
+        urls = [u for u in urls if "simplify.jobs/" not in u and "offerpilot.ai" not in u]
+        apply_url = urls[0] if urls else None
+        if not apply_url:
+            continue
+        apply_url = re.sub(r"[?&]utm_source=[^&]+", "", apply_url).rstrip("?&")
+
+        days_old = _parse_relative_date(_strip_html(date_cell))
+        if days_old is None:
+            continue
+
+        yield {
+            "id": f"vanshb03::{company}::{role}::{apply_url}",
+            "company": company,
+            "role": role,
+            "location": location,
+            "url": apply_url,
+            "days_old": days_old,
+            "source": "vanshb03/New-Grad-2026",
+        }
+
+
 def _parse_relative_date(s: str) -> int | None:
     s = s.strip()
     if not s:
@@ -107,7 +179,7 @@ def _strip_html(s: str) -> str:
     return s
 
 
-SOURCES = [fetch_simplify_newgrad]
+SOURCES = [fetch_simplify_newgrad, fetch_vanshb03_newgrad]
 
 
 def fetch_all() -> list[dict]:
