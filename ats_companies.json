@@ -122,6 +122,11 @@
     "zapier",
     "zip"
   ],
+  "workable": [
+    "quadric-dot-i-o-inc",
+    "rokt",
+    "sigmadefense"
+  ],
   "slug_to_company": {
     "ashby:8vc": "8VC",
     "ashby:anima": "Anima",
@@ -239,6 +244,9 @@
     "lever:voleon": "Voleon",
     "lever:weride": "WeRide",
     "lever:whoop": "Whoop",
-    "lever:wyetechllc": "Wyetech"
+    "lever:wyetechllc": "Wyetech",
+    "workable:quadric-dot-i-o-inc": "Quadric",
+    "workable:rokt": "Rokt",
+    "workable:sigmadefense": "Sigma Defense"
   }
 }

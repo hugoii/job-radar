@@ -65,18 +65,21 @@ def save_seen(seen: set) -> None:
         json.dump({"urls": sorted(urls)}, f, indent=2, ensure_ascii=False)
 
 
+_ATS_NAMES = ("greenhouse", "lever", "ashby", "workable")
+
+
 def load_ats_state() -> tuple[dict[str, set], dict[str, str]]:
     if not ATS_PATH.exists():
-        return {"greenhouse": set(), "lever": set(), "ashby": set()}, {}
+        return {ats: set() for ats in _ATS_NAMES}, {}
     with open(ATS_PATH, encoding="utf-8") as f:
         data = json.load(f)
-    slugs = {ats: set(data.get(ats) or []) for ats in ("greenhouse", "lever", "ashby")}
+    slugs = {ats: set(data.get(ats) or []) for ats in _ATS_NAMES}
     mapping = data.get("slug_to_company") or {}
     return slugs, mapping
 
 
 def save_ats_state(slugs: dict[str, set], mapping: dict[str, str]) -> None:
-    out = {ats: sorted(slugs.get(ats, set())) for ats in ("greenhouse", "lever", "ashby")}
+    out = {ats: sorted(slugs.get(ats, set())) for ats in _ATS_NAMES}
     out["slug_to_company"] = dict(sorted(mapping.items()))
     with open(ATS_PATH, "w", encoding="utf-8") as f:
         json.dump(out, f, indent=2, ensure_ascii=False)

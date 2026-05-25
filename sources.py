@@ -148,12 +148,14 @@ _ATS_PATTERNS = [
     (re.compile(r"jobs\.lever\.co/([a-zA-Z0-9_-]+)"), "lever"),
     (re.compile(r"jobs\.ashbyhq\.com/([a-zA-Z0-9_-]+)"), "ashby"),
     (re.compile(r"api\.ashbyhq\.com/posting-api/job-board/([a-zA-Z0-9_-]+)"), "ashby"),
+    (re.compile(r"apply\.workable\.com/([a-zA-Z0-9_-]+)/"), "workable"),
 ]
+_SKIP_SLUGS = {"embed", "api", "widget", "www", "static", "assets", "_next"}
 
 
 def discover_ats(jobs: list[dict]) -> tuple[dict[str, set[str]], dict[str, str]]:
     """Extract ATS slugs + slug->company-name mapping from curated job apply URLs."""
-    slugs: dict[str, set[str]] = {"greenhouse": set(), "lever": set(), "ashby": set()}
+    slugs: dict[str, set[str]] = {"greenhouse": set(), "lever": set(), "ashby": set(), "workable": set()}
     mapping: dict[str, str] = {}
     for job in jobs:
         url = job.get("url") or ""
@@ -161,30 +163,31 @@ def discover_ats(jobs: list[dict]) -> tuple[dict[str, set[str]], dict[str, str]]
             m = pattern.search(url)
             if m:
                 slug = m.group(1).lower()
-                if slug in ("embed",):  # not a real company slug
+                if slug in _SKIP_SLUGS:
                     continue
                 slugs[ats].add(slug)
                 key = f"{ats}:{slug}"
                 if key not in mapping and job.get("company"):
-                    # First sighting wins; strip leading emoji/symbols
                     mapping[key] = re.sub(r"^[^\w(]+", "", job["company"]).strip()
                 break
     return slugs, mapping
 
 
-def fetch_all_ats(slugs_by_ats: dict[str, list[str]], slug_to_name: dict[str, str], max_workers: int = 30, max_age_days: int = 14) -> list[dict]:
+def fetch_all_ats(slugs_by_ats: dict[str, list[str]], slug_to_name: dict[str, str], max_workers: int = 40, max_age_days: int = 14) -> list[dict]:
     """Concurrently fetch all known ATS company boards. `max_age_days` drops obviously-stale postings cheaply."""
     tasks: list[tuple[str, str]] = []
-    for slug in slugs_by_ats.get("greenhouse", []):
-        tasks.append(("greenhouse", slug))
-    for slug in slugs_by_ats.get("lever", []):
-        tasks.append(("lever", slug))
-    for slug in slugs_by_ats.get("ashby", []):
-        tasks.append(("ashby", slug))
+    for ats in ("greenhouse", "lever", "ashby", "workable"):
+        for slug in slugs_by_ats.get(ats, []):
+            tasks.append((ats, slug))
 
-    fetcher = {"greenhouse": _fetch_greenhouse, "lever": _fetch_lever, "ashby": _fetch_ashby}
+    fetcher = {
+        "greenhouse": _fetch_greenhouse,
+        "lever": _fetch_lever,
+        "ashby": _fetch_ashby,
+        "workable": _fetch_workable,
+    }
     jobs: list[dict] = []
-    errors: dict[str, int] = {"greenhouse": 0, "lever": 0, "ashby": 0}
+    errors: dict[str, int] = {ats: 0 for ats in fetcher}
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(fetcher[ats], slug, slug_to_name.get(f"{ats}:{slug}")): (ats, slug) for ats, slug in tasks}
@@ -253,6 +256,36 @@ def _fetch_lever(slug: str, company_hint: str | None) -> list[dict]:
             "url": apply_url,
             "days_old": days,
             "source": f"lever/{slug}",
+        })
+    return out
+
+
+def _fetch_workable(slug: str, company_hint: str | None) -> list[dict]:
+    url = f"https://apply.workable.com/api/v1/widget/accounts/{slug}"
+    r = requests.get(url, timeout=10)
+    if r.status_code != 200:
+        return []
+    data = r.json()
+    # Workable returns the official company display name → prefer it over the slug-derived guess
+    company = data.get("name") or company_hint or _slug_to_title(slug)
+    out = []
+    for j in data.get("jobs") or []:
+        loc_parts = [p for p in (j.get("city"), j.get("state"), j.get("country")) if p]
+        location = ", ".join(loc_parts)
+        date_str = j.get("created_at") or j.get("published_on") or ""
+        days = _days_from_iso(date_str)
+        if days is None:
+            continue
+        apply_url = j.get("application_url") or j.get("url") or ""
+        if not apply_url:
+            continue
+        out.append({
+            "company": company,
+            "role": (j.get("title") or "").strip(),
+            "location": location,
+            "url": apply_url,
+            "days_old": days,
+            "source": f"workable/{slug}",
         })
     return out
 
