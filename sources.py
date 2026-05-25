@@ -1,26 +1,29 @@
-"""Job source parsers. Each source fn returns a list of job dicts with a stable `id`."""
+"""Job source parsers + direct ATS pollers."""
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Iterable
 
 import requests
 
 
+# ---------------------------------------------------------------------------
+# Curated sources (markdown / HTML tables in NG GitHub repos)
+# ---------------------------------------------------------------------------
+
 SIMPLIFY_README_URL = "https://raw.githubusercontent.com/SimplifyJobs/New-Grad-Positions/master/README.md"
 VANSHB03_README_URL = "https://raw.githubusercontent.com/vanshb03/New-Grad-2026/main/README.md"
 
 
 def fetch_simplify_newgrad() -> list[dict]:
-    """Parse SimplifyJobs/New-Grad-Positions README (HTML tables embedded in markdown)."""
     resp = requests.get(SIMPLIFY_README_URL, timeout=30)
     resp.raise_for_status()
     return list(_parse_simplify(resp.text))
 
 
 def fetch_vanshb03_newgrad() -> list[dict]:
-    """Parse vanshb03/New-Grad-2026 README (pure markdown tables)."""
     resp = requests.get(VANSHB03_README_URL, timeout=30)
     resp.raise_for_status()
     return list(_parse_vanshb03(resp.text))
@@ -46,7 +49,6 @@ def _parse_simplify(text: str) -> Iterable[dict]:
             company = (m.group(1).strip() if m else _strip_html(company_cell))
             if company:
                 last_company = company
-
         if not company:
             continue
 
@@ -56,10 +58,10 @@ def _parse_simplify(text: str) -> Iterable[dict]:
         location = _strip_html(loc_cell)
 
         urls = re.findall(r'href="(https?://[^"]+)"', app_cell)
-        apply_url = next((u for u in urls if "simplify.jobs/" not in u), None)
+        urls = [u for u in urls if "simplify.jobs/" not in u and "offerpilot.ai" not in u]
+        apply_url = urls[0] if urls else None
         if not apply_url:
             continue
-        # Strip Simplify's ref params for cleaner URLs
         apply_url = re.sub(r"[?&](utm_source|ref)=Simplify\b[^&]*", "", apply_url).rstrip("?&")
 
         days_old = _parse_relative_date(_strip_html(date_cell))
@@ -67,7 +69,6 @@ def _parse_simplify(text: str) -> Iterable[dict]:
             continue
 
         yield {
-            "id": f"simplify::{company}::{role}::{apply_url}",
             "company": company,
             "role": role,
             "location": location,
@@ -78,7 +79,6 @@ def _parse_simplify(text: str) -> Iterable[dict]:
 
 
 def _parse_vanshb03(md: str) -> Iterable[dict]:
-    """Parse vanshb03-style markdown tables: | Company | Role | Location | <a href=...> | Mon DD |"""
     last_company = None
     in_table = False
     for line in md.splitlines():
@@ -89,11 +89,9 @@ def _parse_vanshb03(md: str) -> Iterable[dict]:
         if len(cells) < 5:
             continue
         first = cells[0]
-        # Separator row → enter table mode
         if set(first) <= {"-", ":", " "} and first:
             in_table = True
             continue
-        # Header row
         if first.lower() in ("company", "name"):
             continue
         if not in_table:
@@ -105,10 +103,7 @@ def _parse_vanshb03(md: str) -> Iterable[dict]:
             company = last_company
         else:
             m = re.search(r"\[([^\]]+)\]", company_cell)
-            if m:
-                company = m.group(1).strip()
-            else:
-                company = company_cell.strip("* ").strip()
+            company = m.group(1).strip() if m else company_cell.strip("* ").strip()
             if company:
                 last_company = company
         if not company:
@@ -131,7 +126,6 @@ def _parse_vanshb03(md: str) -> Iterable[dict]:
             continue
 
         yield {
-            "id": f"vanshb03::{company}::{role}::{apply_url}",
             "company": company,
             "role": role,
             "location": location,
@@ -139,6 +133,195 @@ def _parse_vanshb03(md: str) -> Iterable[dict]:
             "days_old": days_old,
             "source": "vanshb03/New-Grad-2026",
         }
+
+
+# ---------------------------------------------------------------------------
+# ATS auto-discovery + direct polling (Greenhouse / Lever / Ashby)
+# ---------------------------------------------------------------------------
+
+# Patterns that extract ATS company slugs from apply URLs found in curated data.
+_ATS_PATTERNS = [
+    (re.compile(r"boards-api\.greenhouse\.io/v\d+/boards/([a-zA-Z0-9_-]+)"), "greenhouse"),
+    (re.compile(r"job-boards\.greenhouse\.io/([a-zA-Z0-9_-]+)"), "greenhouse"),
+    (re.compile(r"boards\.greenhouse\.io/([a-zA-Z0-9_-]+?)(?:/|$|\?)"), "greenhouse"),
+    (re.compile(r"api\.lever\.co/v\d+/postings/([a-zA-Z0-9_-]+)"), "lever"),
+    (re.compile(r"jobs\.lever\.co/([a-zA-Z0-9_-]+)"), "lever"),
+    (re.compile(r"jobs\.ashbyhq\.com/([a-zA-Z0-9_-]+)"), "ashby"),
+    (re.compile(r"api\.ashbyhq\.com/posting-api/job-board/([a-zA-Z0-9_-]+)"), "ashby"),
+]
+
+
+def discover_ats(jobs: list[dict]) -> tuple[dict[str, set[str]], dict[str, str]]:
+    """Extract ATS slugs + slug->company-name mapping from curated job apply URLs."""
+    slugs: dict[str, set[str]] = {"greenhouse": set(), "lever": set(), "ashby": set()}
+    mapping: dict[str, str] = {}
+    for job in jobs:
+        url = job.get("url") or ""
+        for pattern, ats in _ATS_PATTERNS:
+            m = pattern.search(url)
+            if m:
+                slug = m.group(1).lower()
+                if slug in ("embed",):  # not a real company slug
+                    continue
+                slugs[ats].add(slug)
+                key = f"{ats}:{slug}"
+                if key not in mapping and job.get("company"):
+                    # First sighting wins; strip leading emoji/symbols
+                    mapping[key] = re.sub(r"^[^\w(]+", "", job["company"]).strip()
+                break
+    return slugs, mapping
+
+
+def fetch_all_ats(slugs_by_ats: dict[str, list[str]], slug_to_name: dict[str, str], max_workers: int = 30, max_age_days: int = 14) -> list[dict]:
+    """Concurrently fetch all known ATS company boards. `max_age_days` drops obviously-stale postings cheaply."""
+    tasks: list[tuple[str, str]] = []
+    for slug in slugs_by_ats.get("greenhouse", []):
+        tasks.append(("greenhouse", slug))
+    for slug in slugs_by_ats.get("lever", []):
+        tasks.append(("lever", slug))
+    for slug in slugs_by_ats.get("ashby", []):
+        tasks.append(("ashby", slug))
+
+    fetcher = {"greenhouse": _fetch_greenhouse, "lever": _fetch_lever, "ashby": _fetch_ashby}
+    jobs: list[dict] = []
+    errors: dict[str, int] = {"greenhouse": 0, "lever": 0, "ashby": 0}
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(fetcher[ats], slug, slug_to_name.get(f"{ats}:{slug}")): (ats, slug) for ats, slug in tasks}
+        for fut in as_completed(futures):
+            ats, slug = futures[fut]
+            try:
+                batch = fut.result()
+                # Cheap age trim so curated dedup downstream is faster
+                jobs.extend(j for j in batch if (j.get("days_old") or 999) <= max_age_days)
+            except Exception:
+                errors[ats] += 1
+
+    print(f"[info] ats polled: {len(tasks)} endpoints  ({sum(errors.values())} errors: {errors})", flush=True)
+    return jobs
+
+
+def _fetch_greenhouse(slug: str, company_hint: str | None) -> list[dict]:
+    url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=false"
+    r = requests.get(url, timeout=10)
+    if r.status_code != 200:
+        return []
+    data = r.json()
+    company = company_hint or _slug_to_title(slug)
+    out = []
+    for j in data.get("jobs") or []:
+        loc = (j.get("location") or {}).get("name", "")
+        updated = j.get("updated_at") or j.get("created_at") or ""
+        days = _days_from_iso(updated)
+        if days is None:
+            continue
+        apply_url = j.get("absolute_url") or ""
+        if not apply_url:
+            continue
+        out.append({
+            "company": company,
+            "role": (j.get("title") or "").strip(),
+            "location": loc,
+            "url": apply_url,
+            "days_old": days,
+            "source": f"greenhouse/{slug}",
+        })
+    return out
+
+
+def _fetch_lever(slug: str, company_hint: str | None) -> list[dict]:
+    url = f"https://api.lever.co/v0/postings/{slug}?mode=json"
+    r = requests.get(url, timeout=10)
+    if r.status_code != 200:
+        return []
+    data = r.json()
+    company = company_hint or _slug_to_title(slug)
+    out = []
+    for j in data or []:
+        loc = ((j.get("categories") or {}).get("location") or "").strip()
+        created = j.get("createdAt") or 0
+        days = _days_from_ms(created)
+        if days is None:
+            continue
+        apply_url = j.get("hostedUrl") or j.get("applyUrl") or ""
+        if not apply_url:
+            continue
+        out.append({
+            "company": company,
+            "role": (j.get("text") or "").strip(),
+            "location": loc,
+            "url": apply_url,
+            "days_old": days,
+            "source": f"lever/{slug}",
+        })
+    return out
+
+
+def _fetch_ashby(slug: str, company_hint: str | None) -> list[dict]:
+    url = f"https://api.ashbyhq.com/posting-api/job-board/{slug}"
+    r = requests.get(url, timeout=10)
+    if r.status_code != 200:
+        return []
+    data = r.json()
+    company = company_hint or _slug_to_title(slug)
+    out = []
+    for j in data.get("jobs") or []:
+        loc = j.get("locationName") or ""
+        published = j.get("publishedAt") or j.get("updatedAt") or ""
+        days = _days_from_iso(published)
+        if days is None:
+            continue
+        apply_url = j.get("applyUrl") or j.get("jobUrl") or ""
+        if not apply_url:
+            continue
+        out.append({
+            "company": company,
+            "role": (j.get("title") or "").strip(),
+            "location": loc,
+            "url": apply_url,
+            "days_old": days,
+            "source": f"ashby/{slug}",
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def canonical_url(url: str) -> str:
+    """Normalize an apply URL for cross-source dedup."""
+    if not url:
+        return ""
+    url = url.split("#")[0].split("?")[0].rstrip("/")
+    return url.lower()
+
+
+def _slug_to_title(slug: str) -> str:
+    return slug.replace("-", " ").replace("_", " ").title()
+
+
+def _days_from_iso(iso_str: str) -> int | None:
+    if not iso_str:
+        return None
+    try:
+        s = iso_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return max(0, (datetime.now(timezone.utc) - dt).days)
+    except (ValueError, TypeError):
+        return None
+
+
+def _days_from_ms(ms: int) -> int | None:
+    if not ms:
+        return None
+    try:
+        dt = datetime.fromtimestamp(int(ms) / 1000, tz=timezone.utc)
+        return max(0, (datetime.now(timezone.utc) - dt).days)
+    except (ValueError, OSError, OverflowError):
+        return None
 
 
 def _parse_relative_date(s: str) -> int | None:
@@ -155,7 +338,6 @@ def _parse_relative_date(s: str) -> int | None:
     if m: return int(m.group(1)) * 30
     m = re.match(r"^(\d+)\s*y$", s, re.IGNORECASE)
     if m: return int(m.group(1)) * 365
-    # "Mon DD" fallback
     m = re.match(r"^([A-Z][a-z]{2})\s+(\d+)$", s)
     if m:
         try:
@@ -170,7 +352,6 @@ def _parse_relative_date(s: str) -> int | None:
 
 
 def _strip_html(s: str) -> str:
-    # Handle <br>, <br/>, <br />, and the malformed </br> Simplify sometimes uses
     s = re.sub(r"<\s*/?\s*br\s*/?\s*>", ", ", s, flags=re.IGNORECASE)
     s = re.sub(r"<[^>]+>", " ", s)
     s = s.replace("&nbsp;", " ").replace("&amp;", "&")
@@ -179,16 +360,17 @@ def _strip_html(s: str) -> str:
     return s
 
 
-SOURCES = [fetch_simplify_newgrad, fetch_vanshb03_newgrad]
+CURATED_SOURCES = [fetch_simplify_newgrad, fetch_vanshb03_newgrad]
 
 
-def fetch_all() -> list[dict]:
+def fetch_curated() -> list[dict]:
+    """Pull all curated NG sources (Simplify, vanshb03)."""
     jobs: list[dict] = []
-    for fn in SOURCES:
+    for fn in CURATED_SOURCES:
         try:
             batch = fn()
             print(f"[info] {fn.__name__}: {len(batch)} jobs", flush=True)
             jobs.extend(batch)
         except Exception as e:
-            print(f"[warn] source {fn.__name__} failed: {e}", flush=True)
+            print(f"[warn] {fn.__name__} failed: {e}", flush=True)
     return jobs

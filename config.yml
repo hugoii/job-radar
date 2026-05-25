@@ -64,11 +64,14 @@ exclude_keywords:
   - co-op
   - phd
   - senior
-  - " sr "
-  - " sr."
+  - "sr."
+  - "sr "
+  - " sr"
   - "sr,"
   - staff engineer
+  - "staff "       # catches "Staff Software Engineer", "Staff Wireless ...", etc.
   - principal
+  - "lead "        # catches "Lead Software Engineer", "Lead Data Scientist", etc.
   - lead engineer
   - lead software
   - manager ii
@@ -84,6 +87,14 @@ exclude_keywords:
   - level iii
   - mid-level
   - mid level
+  # Managerial roles (not PM/APM/TPM which user wants)
+  - engineering manager
+  - engineering management
+  - "manager, solutions"
+  - "manager, sales"
+  - "manager, customer"
+  - "manager, business"
+  - "manager, professional"
 
   # Clearance / citizenship — strong signal of no H1B sponsorship
   - clearance
@@ -97,6 +108,11 @@ exclude_keywords:
   - must be a us citizen
   - dod
   - department of defense
+  - public sector
+  - federal customer
+  - federal services
+  - classified
+  - government cloud
 
 # Block specific companies (case-insensitive substring on company name).
 # Defense / federal contractors — most positions require clearance & US citizenship, no H1B.
@@ -132,6 +148,20 @@ company_block:
   - Riverside Research
   - Parsons
   - Carahsoft
+  # Commercial-defense hybrids — most roles require clearance, won't sponsor
+  - Anduril
+  - Palantir
+  - True Anomaly
+  - General Matter
+  - Torc Robotics
+  - PingWind
+  - Wyetech
+  - Zone 5 Technologies
+  - Freedom Technology
+  - Freedom Consulting
+  - DLH
+  - mthree
+  - Northwood Space
 
 # Block locations associated with US military / intelligence (clearance-only sites).
 location_block:
